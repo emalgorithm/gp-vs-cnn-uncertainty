@@ -1,5 +1,5 @@
 from torch.utils.data import Dataset
-import scipy
+import scipy.io
 from PIL import Image
 
 
