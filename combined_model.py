@@ -1,5 +1,5 @@
 import gpytorch
-from gp import GaussianProcessLayer
+from gp_layer import GaussianProcessLayer
 import torch
 
 
