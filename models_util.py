@@ -2,6 +2,8 @@ from cnn_feature_extractor import CNNFeatureExtractor
 import torch
 from combined_model import CombinedModel
 import gpytorch
+import numpy as np
+from data_util import read_data
 
 
 def load_combined_model(file_path):
@@ -25,23 +27,58 @@ def load_combined_model(file_path):
 
 def test_model(model, likelihood, test_loader):
     correct = 0
-    stds = []
+    correct_stds = []
+    wrong_stds = []
     for data, target in test_loader:
-        # data, target = data.cuda(), target.cuda()
         with torch.no_grad():
             output = likelihood(model(data))
             pred = output.probs.argmax(1)
-            batch_stds = compute_variance(model(data), likelihood.mixing_weights, pred)
-            stds += batch_stds.tolist()
+            correct_batch_stds, wrong_batch_stds, _ = compute_variance(model(data),
+                                                             likelihood.mixing_weights, pred, target)
+            correct_stds += correct_batch_stds
+            wrong_stds += wrong_batch_stds
             target = target.argmax(1)
             correct += pred.eq(target.view_as(pred)).cpu().sum()
-    print('Test set: Accuracy: {}/{} ({}%)'.format(
+    print('GP test set: Accuracy: {}/{} ({}%)'.format(
         correct, len(test_loader.dataset), 100. * correct / float(len(test_loader.dataset))
     ))
-    return stds
+    correct_variance = np.array(correct_stds) ** 2
+    wrong_variance = np.array(wrong_stds) ** 2
+    return correct_variance, wrong_variance
 
 
-def compute_variance(latent_func, mixing_weights, pred):
+def test_model_with_rejection(model, likelihood, test_loader, variance_threshold=0.04, penalty=1):
+    correct = 0
+    correct_stds = []
+    wrong_stds = []
+    for data, target in test_loader:
+        with torch.no_grad():
+            output = likelihood(model(data))
+            pred = output.probs.argmax(1)
+            correct_batch_stds, wrong_batch_stds, batch_stds = compute_variance(model(data),
+                                                             likelihood.mixing_weights, pred, target)
+            correct_stds += correct_batch_stds
+            wrong_stds += wrong_batch_stds
+            target = target.argmax(1)
+            for i, _ in enumerate(target):
+                if batch_stds[i] < variance_threshold:
+                    correct += 1 if target[i] == pred[i] else -penalty
+            # correct += pred.eq(target.view_as(pred)).cpu().sum()
+    print('GP test set: Score: {} on {} samples'.format(
+        correct, len(test_loader.dataset)
+    ))
+    correct_variance = np.array(correct_stds) ** 2
+    wrong_variance = np.array(wrong_stds) ** 2
+    return correct, correct_variance, wrong_variance
+
+
+# def test_cnn_model(cnn_model):
+#     x_test, y_test = read_data('data/mnist-with-awgn.mat')
+#     score = cnn_model.evaluate(x_test, y_test, verbose=0)
+#     print('CNN Test accuracy:', score[1])
+
+
+def compute_variance(latent_func, mixing_weights, pred, target):
     n_classes = 10
     n_samples = 20
     samples = latent_func.rsample(sample_shape=torch.Size((n_samples,)))
@@ -52,8 +89,14 @@ def compute_variance(latent_func, mixing_weights, pred):
     softmax = torch.nn.functional.softmax(mixed_fs.t(), 1).view(n_data, n_samples, n_classes)
 
     classes_stds = softmax.std(1)
-    max_class_stds = torch.Tensor(n_data)
+    correct_max_class_stds = []
+    wrong_max_class_stds = []
+    max_class_stds = []
     for i, row in enumerate(classes_stds):
-        max_class_stds[i] = row[pred[i]]
+        if pred[i] == target[i].argmax():
+            correct_max_class_stds.append(row[pred[i]])
+        else:
+            wrong_max_class_stds.append(row[pred[i]])
+        max_class_stds.append(row[pred[i]])
 
-    return max_class_stds
+    return correct_max_class_stds, wrong_max_class_stds, max_class_stds
