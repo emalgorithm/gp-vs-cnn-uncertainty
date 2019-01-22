@@ -1,4 +1,4 @@
-from cnn import get_cnn_embedding_model
+from models_util import get_cnn_embedding_model
 import torch
 
 
