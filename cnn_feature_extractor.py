@@ -1,4 +1,5 @@
-from keras.models import load_model
+from conv_net import ConvNet
+import torch
 
 
 class CNNFeatureExtractor:
@@ -9,13 +10,12 @@ class CNNFeatureExtractor:
         self.model = self.get_cnn_embedding_model()
 
     def forward(self, x):
-        return self.model.predict(x)
+        return self.model.embed(x)
 
     @staticmethod
     def get_cnn_embedding_model():
-        cnn_model = load_model('models/CNN_mnist_model.h5')
-        cnn_model.pop()
-        cnn_model.pop()
-
+        cnn_model = ConvNet()
+        cnn_model.load_state_dict(torch.load("models/cnn_mnist.ckpt", map_location='cpu'))
+        cnn_model.eval()
         return cnn_model
 
