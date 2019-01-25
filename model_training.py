@@ -6,10 +6,7 @@ import torch
 from torch.optim import SGD
 from torch.optim.lr_scheduler import MultiStepLR
 import torchvision.transforms as transforms
-from models_util import get_cnn_embedding_model
 
-
-cnn_model = get_cnn_embedding_model()
 
 normalize = transforms.Normalize(mean=[0.5071, 0.4867, 0.4408], std=[0.2675, 0.2565, 0.2761])
 common_trans = [transforms.ToTensor(), normalize]
@@ -61,7 +58,7 @@ def train(epoch):
             epoch, batch_idx + 1, len(train_loader), loss.item()))
 
 
-def test():
+def model_test():
     model.eval()
     likelihood.eval()
 
@@ -81,8 +78,8 @@ for epoch in range(1, n_epochs + 1):
     scheduler.step()
     with gpytorch.settings.use_toeplitz(False), gpytorch.settings.max_preconditioner_size(0):
         train(epoch)
-        test()
+        model_test()
     state_dict = model.state_dict()
     likelihood_state_dict = likelihood.state_dict()
     torch.save({'model': state_dict, 'likelihood': likelihood_state_dict},
-               'models/gp_mnist.dat')
+               'models/gp_mnist2.dat')
