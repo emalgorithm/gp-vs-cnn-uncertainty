@@ -3,7 +3,7 @@ import torch
 from combined_model import CombinedModel
 import gpytorch
 import numpy as np
-from data_util import get_data_loader, read_data
+from data_util import get_data_loader
 
 
 def load_combined_model(file_path):
@@ -37,7 +37,8 @@ def test_model(model, likelihood, test_loader):
                                                              likelihood.mixing_weights, pred, target)
             correct_stds += correct_batch_stds
             wrong_stds += wrong_batch_stds
-            target = target.argmax(1)
+            # if target.numel() != 1:
+            #     target = target.argmax(1)
             correct += pred.eq(target.view_as(pred)).cpu().sum()
     print('GP test set: Accuracy: {}/{} ({}%)'.format(
         correct, len(test_loader.dataset), 100. * correct / float(len(test_loader.dataset))
@@ -47,7 +48,7 @@ def test_model(model, likelihood, test_loader):
     return correct_variance, wrong_variance
 
 
-def test_model_with_rejection(model, likelihood, test_loader, variance_threshold=0.04, penalty=1):
+def test_model_with_rejection(model, likelihood, test_loader, penalty, threshold=0.04):
     correct = 0
     correct_stds = []
     wrong_stds = []
@@ -59,51 +60,82 @@ def test_model_with_rejection(model, likelihood, test_loader, variance_threshold
                                                              likelihood.mixing_weights, pred, target)
             correct_stds += correct_batch_stds
             wrong_stds += wrong_batch_stds
-            target = target.argmax(1)
+            # target = target.argmax(1)
             for i, _ in enumerate(target):
-                if batch_stds[i] < variance_threshold:
+                if batch_stds[i] < threshold:
                     correct += 1 if target[i] == pred[i] else -penalty
             # correct += pred.eq(target.view_as(pred)).cpu().sum()
-    print('GP test set: Score: {} on {} samples'.format(
-        correct, len(test_loader.dataset)
-    ))
+    print('GP with rejection: score: {}'.format(correct))
     correct_variance = np.array(correct_stds) ** 2
     wrong_variance = np.array(wrong_stds) ** 2
     return correct, correct_variance, wrong_variance
 
 
-def test_cnn_model(cnn_model, file_path):
-    x_test, y_test = read_data(file_path)
-    score = cnn_model.evaluate(x_test, y_test, verbose=0)
-    print('CNN Test accuracy:', score[1])
-
-
-def test_cnn_model_with_rejection(cnn_model, file_path, penalty=1):
-    x_test, y_test = read_data(file_path)
-    y_pred = cnn_model.predict(x_test)
+def test_cnn_model(cnn_model, test_loader, penalty=0):
     correct = 0
-    for i, _ in enumerate(y_test):
-        correct += 1 if np.argmax(y_test[i]) == np.argmax(y_pred[i]) else -penalty
-    print('CNN Test Score:', correct)
+    correct_stds = []
+    wrong_stds = []
+    for data, target in test_loader:
+        with torch.no_grad():
+            output = cnn_model(data)
+            for i, _ in enumerate(output):
+                y_pred = output[i].argmax()
+                if y_pred.item() == target[i].item():
+                    correct += 1
+                    correct_stds.append(1 - output[i].max().item())
+                else:
+                    correct -= penalty
+                    wrong_stds.append(1 - output[i].max().item())
+    print('CNN test set: Accuracy: {}/{} ({}%)'.format(
+        correct, len(test_loader.dataset), 100. * correct / float(len(test_loader.dataset))
+    ))
+    correct_variance = np.array(correct_stds)
+    wrong_variance = np.array(wrong_stds)
+    return correct_variance, wrong_variance
+
+
+def test_cnn_model_with_rejection(cnn_model, test_loader, penalty, threshold=0.05):
+    correct = 0
+    correct_stds = []
+    wrong_stds = []
+    for data, target in test_loader:
+        with torch.no_grad():
+            output = cnn_model(data)
+            for i, _ in enumerate(output):
+                y_pred = output[i].argmax()
+                var = 1 - output[i].max()
+                if var <= 0.05:
+                    if y_pred.item() == target[i].item():
+                        correct += 1
+                        correct_stds.append(1 - output[i].max().item())
+                    else:
+                        correct -= penalty
+                        wrong_stds.append(1 - output[i].max().item())
+    print('CNN with rejection: score: {}'.format(correct))
+    correct_variance = np.array(correct_stds)
+    wrong_variance = np.array(wrong_stds)
     return correct
 
 
-def compare_rejection_models(file_path, cnn_model, combined_model, likelihood):
+def compare_rejection_models(test_loader, cnn_model, combined_model, likelihood, gp_threshold,
+                             cnn_threshold):
     cnn_scores = []
+    cnn_rej_scores = []
     gp_scores = []
 
-    for penalty in range(1, 11, 2):
+    for penalty in range(0, 11, 2):
         print("Penalty: {}".format(penalty))
-        test_loader = get_data_loader(file_path)
         gp_score, _, _ = test_model_with_rejection(combined_model, likelihood, test_loader,
-                                                   variance_threshold=0.06, penalty=penalty)
-
-        cnn_score = test_cnn_model_with_rejection(cnn_model, file_path, penalty=penalty)
+                                                   threshold=gp_threshold, penalty=penalty)
+        cnn_score = test_cnn_model(cnn_model, test_loader, penalty=penalty)
+        cnn_rej_score = test_cnn_model_with_rejection(cnn_model, test_loader, penalty=penalty,
+                                                      threshold=cnn_threshold)
         cnn_scores.append(cnn_score)
         gp_scores.append(gp_score)
+        cnn_rej_scores.append(cnn_rej_score)
         print()
         print()
-    return cnn_scores, gp_scores
+    return cnn_scores, cnn_rej_scores, gp_scores
 
 
 def compute_variance(latent_func, mixing_weights, pred, target):
@@ -121,7 +153,7 @@ def compute_variance(latent_func, mixing_weights, pred, target):
     wrong_max_class_stds = []
     max_class_stds = []
     for i, row in enumerate(classes_stds):
-        if pred[i] == target[i].argmax():
+        if pred[i] == target[i]:
             correct_max_class_stds.append(row[pred[i]])
         else:
             wrong_max_class_stds.append(row[pred[i]])
