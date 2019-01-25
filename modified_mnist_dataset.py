@@ -1,6 +1,7 @@
 from torch.utils.data import Dataset
 import scipy.io
 from PIL import Image
+import numpy as np
 
 
 class ModifiedMnistDataset(Dataset):
@@ -20,4 +21,4 @@ class ModifiedMnistDataset(Dataset):
         if self.transform:
             sample = self.transform(sample)
 
-        return sample, self.y_test[idx]
+        return sample, np.argmax(self.y_test[idx])
